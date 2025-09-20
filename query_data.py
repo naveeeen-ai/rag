@@ -52,7 +52,7 @@ Context:
 
 
 _ECE_KEYWORDS = set(
-    "electronics electronic circuit circuits signal signals systems system control controls communication communications analog digital vlsi fpga verilog vhdl cmos bjt mosfet diode op-amp opamp amplifier adc dac sampling filter filters fourier laplace z-transform transform electromagnetics antenna microwave embedded microcontroller microprocessor 8051 arm can i2c spi uart plc power electronics drives modulation demodulation information theory coding ldpc ofdm rf ic design pcb sensor sensors transducer transducers robotics robot vision mechatronics instrumentation measurement measurements noise snr cmrr stability pid feedback transfer function state space kcl kvl network theorems rlc resonance transmission line waveguide wave propagation antenna array beamforming s parameters s-parameters smith chart".split()
+    "electronics electronic circuit circuits signal signals systems system control controls communication communications analog digital vlsi fpga verilog vhdl cmos bjt mosfet diode op-amp opamp amplifier adc dac sampling filter filters fourier laplace z-transform transform electromagnetics em electromagnetic radiation microwave antenna antennas embedded microcontroller microprocessor 8051 arm can i2c spi uart plc power electronics drives modulation demodulation information theory coding ldpc ofdm rf ic design pcb sensor sensors transducer transducers robotics robot vision mechatronics instrumentation measurement measurements noise snr cmrr stability pid feedback transfer function state space kcl kvl network theorems rlc resonance transmission line waveguide wave propagation antenna array beamforming s parameters s-parameters smith chart emi emc".split()
 )
 
 _NON_ECE_EXCLUDE = set(
@@ -150,7 +150,7 @@ def answer_query(question: str, k: int = 4) -> str:
     docs, max_score, context = _retrieve_with_scores(question, k=max(8, k))
 
     # If no useful context found, use web fallback with the requested phrasing
-    context_missing = (not context.strip()) or (max_score and max_score < 0.3)
+    context_missing = (not context.strip()) or (max_score < 0.3)
     if context_missing:
         web_ans = _web_search_answer(question)
         return f"this is not in your context but i'll say you answer:\n\n{web_ans}"
