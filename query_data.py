@@ -60,11 +60,50 @@ _NON_ECE_EXCLUDE = set(
 )
 
 
-def _is_ece_query(text: str) -> bool:
+def _is_ece_query_keywords(text: str) -> bool:
     low = (text or "").lower()
     if any(word in low for word in _NON_ECE_EXCLUDE):
         return False
     return any(word in low for word in _ECE_KEYWORDS)
+
+
+def _is_ece_query_llm(text: str) -> Optional[bool]:
+    if not os.getenv("OPENAI_API_KEY"):
+        return None
+    question = (text or "").strip()
+    if not question:
+        return None
+    llm = ChatOpenAI(model=MODEL, temperature=0)
+    prompt = ChatPromptTemplate.from_template(
+        (
+            "You are an intent classifier for Electronics and Communication Engineering (ECE).\n"
+            "Classify if the user's query is about ECE academic subjects (signals & systems, EM, circuits, communication, VLSI, control, embedded, etc.).\n"
+            "Output EXACTLY one token: ECE or NON-ECE.\n\n"
+            "User query: {q}"
+        )
+    )
+    try:
+        resp = (prompt | llm).invoke({"q": question})
+        out = (resp.content or "").strip().lower()
+        if "ece" == out or out.startswith("ece"):
+            return True
+        if "non-ece" == out or "non ece" in out or out.startswith("non"):
+            return False
+        # Heuristic if model returns sentence
+        if "ece" in out and "non" not in out:
+            return True
+        if "non" in out:
+            return False
+        return None
+    except Exception:
+        return None
+
+
+def _is_ece_query(text: str) -> bool:
+    llm_result = _is_ece_query_llm(text)
+    if llm_result is not None:
+        return llm_result
+    return _is_ece_query_keywords(text)
 
 
 def _load_db():
