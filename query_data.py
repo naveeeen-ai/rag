@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 from get_embedding_function import get_embedding_function
 from dotenv import load_dotenv
 load_dotenv()
+from duckduckgo_search import DDGS
 
 
 CHROMA_DIR = os.getenv("CHROMA_DIR", "chroma_db")
@@ -50,6 +51,22 @@ Context:
 """
 
 
+_ECE_KEYWORDS = set(
+    "electronics electronic circuit circuits signal signals systems system control controls communication communications analog digital vlsi fpga verilog vhdl cmos bjt mosfet diode op-amp opamp amplifier adc dac sampling filter filters fourier laplace z-transform transform electromagnetics antenna microwave embedded microcontroller microprocessor 8051 arm can i2c spi uart plc power electronics drives modulation demodulation information theory coding ldpc ofdm rf ic design pcb sensor sensors transducer transducers robotics robot vision mechatronics instrumentation measurement measurements noise snr cmrr stability pid feedback transfer function state space kcl kvl network theorems rlc resonance transmission line waveguide wave propagation antenna array beamforming s parameters s-parameters smith chart".split()
+)
+
+_NON_ECE_EXCLUDE = set(
+    "cricket football soccer ipl worldcup world cup movie politics election celebrity recipe cooking travel tourism horoscope astrology entertainment music song bollywood hollywood box-office weather stock crypto bitcoin nft gaming anime kdrama instagram tiktok memes".split()
+)
+
+
+def _is_ece_query(text: str) -> bool:
+    low = (text or "").lower()
+    if any(word in low for word in _NON_ECE_EXCLUDE):
+        return False
+    return any(word in low for word in _ECE_KEYWORDS)
+
+
 def _load_db():
     embeddings = get_embedding_function()
     return Chroma(
@@ -76,10 +93,67 @@ def _retrieve_context(query: str, k: int = 8) -> Tuple[List, str]:
     return docs, _format_context(docs)
 
 
-def answer_query(question: str, k: int = 4) -> str:
+def _retrieve_with_scores(query: str, k: int = 8) -> Tuple[List, float, str]:
     db = _load_db()
-    docs = db.similarity_search(question, k=k)
-    context = _format_context(docs)
+    try:
+        pairs = db.similarity_search_with_relevance_scores(query, k=k)
+        docs = [d for d, _ in pairs]
+        scores = [s for _, s in pairs]
+        max_score = max(scores) if scores else 0.0
+        return docs, max_score, _format_context(docs)
+    except Exception:
+        docs = db.similarity_search(query, k=k)
+        return docs, 0.0, _format_context(docs)
+
+
+def _web_search_answer(question: str, max_results: int = 6) -> str:
+    results = []
+    try:
+        with DDGS() as ddg:
+            for r in ddg.text(question, max_results=max_results):
+                title = r.get("title") or ""
+                href = r.get("href") or r.get("url") or ""
+                body = r.get("body") or r.get("snippet") or ""
+                if title and body and href:
+                    results.append({"title": title, "url": href, "snippet": body})
+    except Exception:
+        pass
+
+    if not os.getenv("OPENAI_API_KEY") or not results:
+        # Fallback: return top snippets concatenated
+        bullets = [f"- {r['title']}: {r['snippet']} ({r['url']})" for r in results[:3]]
+        return "\n".join(bullets) if bullets else "No web results found."
+
+    # Use LLM to synthesize a concise answer from web snippets
+    context = "\n\n".join([f"{r['title']}\n{r['snippet']}\n{r['url']}" for r in results])
+    llm = ChatOpenAI(model=MODEL, temperature=0)
+    prompt = ChatPromptTemplate.from_template(
+        """
+Summarize the answer to the user's question using ONLY the provided web snippets.
+Include 1-2 concise sentences and, if helpful, 1-2 bullet points. Do not fabricate.
+Cite sources inline as [n] and then list them at the end as [n] url.
+
+Question: {question}
+Snippets:
+{snippets}
+        """.strip()
+    )
+    chain = prompt | llm
+    resp = chain.invoke({"question": question, "snippets": context})
+    return resp.content
+
+
+def answer_query(question: str, k: int = 4) -> str:
+    if not _is_ece_query(question):
+        return "I'm built to answer subject/syllabus questions for ECE students."
+
+    docs, max_score, context = _retrieve_with_scores(question, k=max(8, k))
+
+    # If no useful context found, use web fallback with the requested phrasing
+    context_missing = (not context.strip()) or (max_score and max_score < 0.3)
+    if context_missing:
+        web_ans = _web_search_answer(question)
+        return f"this is not in your context but i'll say you answer:\n\n{web_ans}"
 
     if os.getenv("OPENAI_API_KEY"):
         llm = ChatOpenAI(model=MODEL, temperature=0)
@@ -88,10 +162,7 @@ def answer_query(question: str, k: int = 4) -> str:
         resp = chain.invoke({"context": context, "question": question})
         return resp.content
 
-    if not context.strip():
-        return "I don't know. Add PDFs/PPTX and ingest first."
-
-    return f"Based on the documents, here is relevant context:\n\n{context}\n\nQuestion: {question}\n\nPlease review the context above to find the answer." 
+    return f"Based on the documents, here is relevant context:\n\n{context}\n\nQuestion: {question}\n\nPlease review the context above to find the answer."
 
 
 def summarize_topic(topic: str, k: int = 8) -> str:
